@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="RequestWorker.js"></script>
+    <title>JavaScript Multi Thread Request</title>
+</head>
+
+<body>
+    <button id="start">Start Task 1</button>
+    <button id="start2">Start Task 2</button>
+    <button id="cancel">Abort Task 1</button>
+    <button id="cancel2">Abort Task 2</button>
+    <button id="cancelall">Abort All</button>
+    <button onclick="console.clear()">Clear Console</button>
+
+    <div>
+        <span>Task List</span>
+        <pre id="list-task">
+        </pre>
+    </div>
+
+    <div style="display: grid; grid-auto-flow: column; width: 100%;">
+        <div>
+            <span>Proccess 1</span>
+            <pre id="prc-task1">
+            </pre>
+        </div>
+        <div>
+            <span>Proccess 2</span>
+            <pre id="prc-task2">
+            </pre>
+        </div>
+    </div>
+
+
+    <script>
+
+        const request1 = new RequestWorker(
+            '1',
+            'progress.php?task1',
+            'process1',
+            "document.getElementById('prc-task1').innerHTML += +data+`\n`;"
+        );
+        const request2 = new RequestWorker(
+            '2',
+            'progress.php?task2',
+            'process2',
+            "document.getElementById('prc-task2').innerHTML += +data+`\n`;"
+        );
+
+        document.getElementById('start').addEventListener('click', function () {
+            document.getElementById('prc-task1').innerHTML = '';
+            request1.start();
+            getTask();
+        });
+
+        document.getElementById('start2').addEventListener('click', function () {
+            document.getElementById('prc-task2').innerHTML = '';
+            request2.start();
+            getTask();
+        });
+
+        document.getElementById('cancelall').addEventListener('click', function () {
+            request1.stop();
+            request2.stop();
+            getTask();
+        });
+        document.getElementById('cancel').addEventListener('click', function () {
+            RequestWorker.stopTask('1', 'progress.php?task1', 'process1');
+            getTask();
+        });
+        document.getElementById('cancel2').addEventListener('click', function () {
+            RequestWorker.stopTask('2', 'progress.php?task2', 'process2');
+            getTask();
+        });
+
+        function getTask() {
+            document.getElementById('list-task').innerHTML = '';
+            RequestWorker.listRunningTasks().forEach(function (task) {
+                document.getElementById('list-task').innerHTML += task + "\n";
+            });
+        }
+    </script>
+</body>
+
+</html>
