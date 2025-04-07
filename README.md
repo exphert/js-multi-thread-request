@@ -14,4 +14,7 @@ RequestWorker.listRunningTasks();
 
 // stop specific running task
 RequestWorker.stopTask(task_id,task_url,task_name);
+
+// stop all running task
+RequestWorker.stopAll();
 ```
