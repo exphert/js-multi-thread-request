@@ -1,89 +1,126 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script src="RequestWorker.js"></script>
-    <title>JavaScript Multi Thread Request</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <script src="RequestWorker.js"></script>
+  <title>JavaScript Multi Thread Request</title>
 </head>
-
 <body>
-    <button id="start">Start Task 1</button>
-    <button id="start2">Start Task 2</button>
-    <button id="cancel">Abort Task 1</button>
-    <button id="cancel2">Abort Task 2</button>
-    <button id="cancelall">Abort All</button>
-    <button onclick="console.clear()">Clear Console</button>
+  <button id="start">Start Task 1</button>
+  <button id="start2">Start Task 2</button>
+  <button id="start3">Start Task 3</button>
+  <button id="cancel">Abort Task 1</button>
+  <button id="cancel2">Abort Task 2</button>
+  <button id="cancel3">Abort Task 3</button>
+  <button id="cancelall">Abort All</button>
+  <button onclick="console.clear()">Clear Console</button>
 
+  <div>
+    <span>Task List</span>
+    <pre id="list-task"></pre>
+  </div>
+
+  <div style="display: grid; grid-auto-flow: column; width: 100%;">
     <div>
-        <span>Task List</span>
-        <pre id="list-task">
-        </pre>
+      <span>Process 1</span>
+      <pre id="prc-task1"></pre>
     </div>
-
-    <div style="display: grid; grid-auto-flow: column; width: 100%;">
-        <div>
-            <span>Proccess 1</span>
-            <pre id="prc-task1">
-            </pre>
-        </div>
-        <div>
-            <span>Proccess 2</span>
-            <pre id="prc-task2">
-            </pre>
-        </div>
+    <div>
+      <span>Process 2</span>
+      <pre id="prc-task2"></pre>
     </div>
+    <div>
+      <span>Process 3</span>
+      <pre id="prc-task3"></pre>
+    </div>
+  </div>
+
+  <script>
+    // RequestWorker with JSON-based config
+    const request1 = new RequestWorker({
+      id: "1",
+      url: "progress.php?task=1",
+      process: "process1",
+      evalOnUpdate: function (data) {
+		  document.getElementById('prc-task1').innerHTML += data + '\n';
+		  const taskList = RequestWorker.listRunningTasks();
+		  document.getElementById("list-task").innerHTML = taskList.join("\n");
+	  }
+    });
+
+    const request2 = new RequestWorker({
+	  id: '2',
+	  url: 'progress.php?task=2',
+	  process: 'process2',
+	  doneNeedle: 'stop-here',
+	  evalOnUpdate: function (data) {
+		document.getElementById('prc-task2').innerHTML += data + '\n';
+	  },
+	  evalOnDone: function (data) {
+		console.log('🎉 Task 2 done:', data);
+		document.getElementById('prc-task2').innerHTML += `--- DONE ---\n`;
+		const taskList = RequestWorker.listRunningTasks();
+		document.getElementById("list-task").innerHTML = taskList.join("\n");
+	  }
+	});
 
 
-    <script>
+    const request3 = new RequestWorker({
+      id: "3",
+      url: "progress.php?task=3",
+      process: "process3",
+      method: "fetch",
+	  evalOnUpdate: function (data) {
+		  document.getElementById('prc-task3').innerHTML = JSON.stringify(data, null, 2);
+		  const taskList = RequestWorker.listRunningTasks();
+		  document.getElementById("list-task").innerHTML = taskList.join("\n");
+	  }
+    });
 
-        const request1 = new RequestWorker(
-            '1',
-            'progress.php?task1',
-            'process1',
-            "document.getElementById('prc-task1').innerHTML += +data+`\n`;"
-        );
-        const request2 = new RequestWorker(
-            '2',
-            'progress.php?task2',
-            'process2',
-            "document.getElementById('prc-task2').innerHTML += +data+`\n`;"
-        );
+    // Button actions
+    document.getElementById("start").addEventListener("click", () => {
+      document.getElementById("prc-task1").innerHTML = "";
+      request1.start();
+      getTaskList();
+    });
 
-        document.getElementById('start').addEventListener('click', function () {
-            document.getElementById('prc-task1').innerHTML = '';
-            request1.start();
-            getTask();
-        });
+    document.getElementById("start2").addEventListener("click", () => {
+      document.getElementById("prc-task2").innerHTML = "";
+      request2.start();
+      getTaskList();
+    });
 
-        document.getElementById('start2').addEventListener('click', function () {
-            document.getElementById('prc-task2').innerHTML = '';
-            request2.start();
-            getTask();
-        });
+    document.getElementById("start3").addEventListener("click", () => {
+      document.getElementById("prc-task3").innerHTML = "";
+      request3.start();
+      getTaskList();
+    });
 
-        document.getElementById('cancelall').addEventListener('click', function () {
-            request1.stop();
-            request2.stop();
-            getTask();
-        });
-        document.getElementById('cancel').addEventListener('click', function () {
-            RequestWorker.stopTask('1', 'progress.php?task1', 'process1');
-            getTask();
-        });
-        document.getElementById('cancel2').addEventListener('click', function () {
-            RequestWorker.stopTask('2', 'progress.php?task2', 'process2');
-            getTask();
-        });
+    document.getElementById("cancel").addEventListener("click", () => {
+      RequestWorker.stopTask(request1.id, request1.url, request1.process);
+      getTaskList();
+    });
 
-        function getTask() {
-            document.getElementById('list-task').innerHTML = '';
-            RequestWorker.listRunningTasks().forEach(function (task) {
-                document.getElementById('list-task').innerHTML += task + "\n";
-            });
-        }
-    </script>
+    document.getElementById("cancel2").addEventListener("click", () => {
+      RequestWorker.stopTask("2", "progress.php?task=2", "process2");
+      getTaskList();
+    });
+
+    document.getElementById("cancel3").addEventListener("click", () => {
+      RequestWorker.stopTask("3", "progress.php?task=3", "process3");
+      getTaskList();
+    });
+
+    document.getElementById("cancelall").addEventListener("click", () => {
+      RequestWorker.stopAll();
+      getTaskList();
+    });
+
+    function getTaskList() {
+      const taskList = RequestWorker.listRunningTasks();
+      document.getElementById("list-task").innerHTML = taskList.join("\n");
+    }
+  </script>
 </body>
-
 </html>
