@@ -1,87 +1,198 @@
-class RequestWorker {
-  static activeTasks = new Map(); // Use a Map to track active tasks with keys as unique identifiers
+/*
+Create by Exphert
+https://github.com/exphert/js-multi-thread-request
+*/
 
-  constructor(id, url, process, evalOnUpdate = null) {
-    this.id = id;
-    this.url = url;
-    this.process = process;
-    this.evalOnUpdate = evalOnUpdate;
-    this.eventSource = null;
+class RequestWorker {
+  static activeTasks = new Map();
+  static queue = [];
+  static maxConcurrent = 3;
+  static currentRunning = 0;
+
+  constructor(config = {}) {
+    if (!config.url) throw new Error("[RequestWorker] 'url' is required");
+    if (!config.process) throw new Error("[RequestWorker] 'process' is required");
+    if (!config.id) throw new Error("[RequestWorker] 'id' is required");
+
+    this.id = config.id === "_UUID_" ? crypto.randomUUID() : config.id;
+    this.url = config.url;
+    this.process = config.process;
+    this.evalOnUpdate = config.evalOnUpdate || null;
+    this.evalOnDone = config.evalOnDone || null;
+    this.method = config.method || "event";
+    this.doneNeedle = config.doneNeedle || "done";
+    this.maxRetries = config.maxRetries ?? 3;
+    this.retryDelay = config.retryDelay ?? 1000;
+    this.fallbackToFetch = config.fallbackToFetch ?? true;
+    this.onProgress = config.onProgress || null;
+    this.queue = config.queue ?? false;
+
+    this.retryCount = 0;
     this.controller = null;
-    this.taskKey = `${id}-${url}-${process}`; // Unique key for the task
+    this.eventSource = null;
+    this.taskKey = `${this.id}-${this.url}-${this.process}`;
+    this.receivedData = false; // 👈 track if we received any data
   }
 
   start() {
-    // Check if the task is already in the list of active tasks
     if (RequestWorker.activeTasks.has(this.taskKey)) {
-      console.warn(
-        `Connection for ID ${this.id}, URL ${this.url}, and Process ${this.process} already exists.`
-      );
-      return; // Exit if the task is already in use
+      console.warn(`[${this.taskKey}] Task already active.`);
+      return;
     }
 
-    // Add task to the list of active tasks
+    if (RequestWorker.currentRunning >= RequestWorker.maxConcurrent) {
+      console.log(`[${this.taskKey}] Queued.`);
+      RequestWorker.queue.push(this);
+      return;
+    }
+
+    RequestWorker.currentRunning++;
     RequestWorker.activeTasks.set(this.taskKey, this);
 
-    if (this.controller) {
-      this.controller.abort();
-    }
-
     this.controller = new AbortController();
-    const signal = this.controller.signal;
 
-    this.eventSource = new EventSource(this.url);
+    if (this.method === "fetch") {
+      this._startFetch();
+    } else {
+      this._startEventStream();
+    }
+  }
 
-    this.eventSource.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      console.log(`Task Key : ${this.taskKey}\nValue : ${data}`);
-      const updateFunction = new Function("data", this.evalOnUpdate);
-      updateFunction(data); // Pass `data` as a parameter
-    };
+  _retry() {
+    if (this.retryCount < this.maxRetries) {
+      const delay = this.retryDelay * (this.retryCount + 1);
+      this.retryCount++;
+      console.warn(`[${this.taskKey}] Retry #${this.retryCount} in ${delay}ms`);
+      setTimeout(() => {
+        this.start();
+      }, delay);
+    } else {
+      console.error(`[${this.taskKey}] Max retries reached.`);
+      this.stop();
+    }
+  }
 
-    this.eventSource.onerror = (err) => {
-      console.error(`Error occurred: ${err}`);
-      this.stop(); // Call stop to clean up
-    };
+  _completeIfMatch(data) {
+    if (typeof data === "string" && data.trim() === this.doneNeedle) {
+      this._callDone(data);
+    } else if (typeof this.evalOnUpdate === "function") {
+      this.evalOnUpdate(data);
+    } else if (typeof this.evalOnUpdate !== "function" && this.evalOnUpdate !== null){
+      console.warn(`[${this.id}] evalOnUpdate is not a valid function`);
+    }
+  }
 
-    signal.addEventListener("abort", () => {
-      this.stop(); // Ensure `stop` cleans up
-      console.log("Request aborted");
-    });
+  _callDone(data) {
+    this.stop();
+    if (typeof this.evalOnDone === "function") {
+      this.evalOnDone(data);
+    } else {
+      console.warn(`[${this.id}] evalOnDone is not a valid function`);
+    }
+  }
+
+  _startEventStream() {
+    try {
+      this.eventSource = new EventSource(this.url);
+
+      this.eventSource.onopen = () => {
+        console.log(`[${this.taskKey}] EventStream connected.`);
+      };
+
+      this.eventSource.onmessage = (event) => {
+        let data = event.data;
+        try {
+          data = JSON.parse(event.data);
+        } catch (_) {}
+
+        this.receivedData = true;
+
+        if (this.onProgress) this.onProgress(data);
+        this._completeIfMatch(data);
+      };
+
+      this.eventSource.onerror = (err) => {
+        console.warn(`[${this.taskKey}] EventStream error or closed`, err);
+
+        // ✅ graceful "done" if we received something before
+        if (this.receivedData) {
+          console.log(`[${this.taskKey}] Stream closed after data. Treating as DONE.`);
+          this._callDone("stream-closed");
+        } else if (this.fallbackToFetch) {
+          console.warn(`[${this.taskKey}] Falling back to fetch`);
+          this.method = "fetch";
+          this.start();
+        } else {
+          this._retry();
+        }
+      };
+    } catch (e) {
+      console.error(`[${this.taskKey}] Failed to init EventStream`, e);
+      this._retry();
+    }
+  }
+
+  async _startFetch() {
+    try {
+      const res = await fetch(this.url, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        signal: this.controller.signal,
+      });
+
+      let data;
+      try {
+        data = await res.clone().json();
+      } catch (_) {
+        data = await res.text();
+      }
+
+      if (this.onProgress) this.onProgress(data);
+      this._completeIfMatch(data);
+
+      // ✅ even if no needle matched, fetch is done
+      if (typeof data !== "string" || data.trim() !== this.doneNeedle) {
+        this._callDone("fetch-completed");
+      }
+    } catch (err) {
+      if (err.name === "AbortError") {
+        console.log(`[${this.taskKey}] Fetch aborted.`);
+      } else {
+        console.error(`[${this.taskKey}] Fetch error:`, err);
+        this._retry();
+      }
+    }
   }
 
   stop() {
-    const taskKey = this.taskKey;
-    if (this.controller) {
-      this.controller.abort();
-      this.controller = null; // Clean up the controller reference
-    }
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = null; // Clean up the EventSource reference
-    }
+    if (this.controller) this.controller.abort();
+    if (this.eventSource) this.eventSource.close();
 
-    // Remove the task from the list of active tasks
-    RequestWorker.activeTasks.delete(taskKey);
+    RequestWorker.activeTasks.delete(this.taskKey);
+    RequestWorker.currentRunning = Math.max(0, RequestWorker.currentRunning - 1);
+    console.log(`[${this.taskKey}] Stopped.`);
+
+    this._runNextInQueue();
   }
 
-  // Static method to stop a specific task by id, url, and process
+  _runNextInQueue() {
+    if (RequestWorker.queue.length > 0 && RequestWorker.currentRunning < RequestWorker.maxConcurrent) {
+      const nextTask = RequestWorker.queue.shift();
+      nextTask.start();
+    }
+  }
+
   static stopTask(id, url, process) {
-    const taskKey = `${id}-${url}-${process}`;
-    const task = RequestWorker.activeTasks.get(taskKey);
-    if (task) {
-      task.stop(); // Stop and clean up the task
-      console.log(
-        `Task with ID ${id}, URL ${url}, and Process ${process} stopped.`
-      );
-    } else {
-      console.warn(
-        `Task with ID ${id}, URL ${url}, and Process ${process} not found.`
-      );
-    }
+    const key = `${id}-${url}-${process}`;
+    const task = RequestWorker.activeTasks.get(key);
+    if (task) task.stop();
   }
 
-  // Static method to list all running tasks
+  static stopAll() {
+    for (let task of RequestWorker.activeTasks.values()) task.stop();
+    RequestWorker.queue = [];
+  }
+
   static listRunningTasks() {
     return Array.from(RequestWorker.activeTasks.keys());
   }
